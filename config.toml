@@ -12,6 +12,9 @@ after_success_message = "User passed the validation."
 # Edit welcome message with this text if user failed validation
 after_fail_message = "User didn't pass the validation and was banned."
 
+# Groups in which bot is allowed to run, leave empty to allow evrywhere 
+allowed_group_ids = []
+
 # Show success and failure messages or delete them. Pick "show" or "del"
 print_success_and_fail_messages_strategy = "show"
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -22,18 +23,19 @@ import (
 
 // Config struct for toml config file
 type Config struct {
-	ButtonText          string `mapstructure:"button_text"`
-	WelcomeMessage      string `mapstructure:"welcome_message"`
-	AfterSuccessMessage string `mapstructure:"after_success_message"`
-	AfterFailMessage    string `mapstructure:"after_fail_message"`
-	PrintSuccessAndFail string `mapstructure:"print_success_and_fail_messages_strategy"`
-	WelcomeTimeout      string `mapstructure:"welcome_timeout"`
-	BanDurations        string `mapstructure:"ban_duration"`
-	UseSocks5Proxy      string `mapstructure:"use_socks5_proxy"`
-	Socks5Address       string `mapstructure:"socks5_address"`
-	Socks5Port          string `mapstructure:"socks5_port"`
-	Socks5Login         string `mapstructure:"socks5_login"`
-	Socks5Password      string `mapstructure:"socks5_password"`
+	ButtonText          string  `mapstructure:"button_text"`
+	WelcomeMessage      string  `mapstructure:"welcome_message"`
+	AfterSuccessMessage string  `mapstructure:"after_success_message"`
+	AfterFailMessage    string  `mapstructure:"after_fail_message"`
+	AllowedGroupIds     []int64 `mapstructure:"allowed_group_ids"`
+	PrintSuccessAndFail string  `mapstructure:"print_success_and_fail_messages_strategy"`
+	WelcomeTimeout      string  `mapstructure:"welcome_timeout"`
+	BanDurations        string  `mapstructure:"ban_duration"`
+	UseSocks5Proxy      string  `mapstructure:"use_socks5_proxy"`
+	Socks5Address       string  `mapstructure:"socks5_address"`
+	Socks5Port          string  `mapstructure:"socks5_port"`
+	Socks5Login         string  `mapstructure:"socks5_login"`
+	Socks5Password      string  `mapstructure:"socks5_password"`
 }
 
 var config Config
@@ -77,6 +79,16 @@ func main() {
 	bot.Handle(tb.OnUserJoined, challengeUser)
 	bot.Handle(tb.OnCallback, passChallenge)
 
+	// Leave if group not in a whitelist
+	if len(config.AllowedGroupIds) != 0 {
+		bot.Handle(tb.OnAddedToGroup, func(m *tb.Message) {
+			if !slices.Contains(config.AllowedGroupIds, m.Chat.ID) {
+				log.Printf("Chat with id=%d is not in allowed group ID's, leaving", m.Chat.ID)
+				bot.Leave(m.Chat)
+			}
+		})
+	}
+
 	bot.Handle("/healthz", func(m *tb.Message) {
 		msg := "I'm OK"
 		if _, err := bot.Send(m.Chat, msg); err != nil {
@@ -97,6 +109,12 @@ func main() {
 }
 
 func challengeUser(m *tb.Message) {
+	// Check if group allowed
+	if len(config.AllowedGroupIds) != 0 && !slices.Contains(config.AllowedGroupIds, m.Chat.ID) {
+		log.Printf("Chat with id=%d is not in allowed group ID's, not trying to challange user", m.Chat.ID)
+		return
+	}
+
 	if m.UserJoined.ID != m.Sender.ID {
 		return
 	}
