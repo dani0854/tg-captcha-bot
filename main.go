@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -25,6 +27,7 @@ import (
 type Config struct {
 	ButtonText          string  `mapstructure:"button_text"`
 	WelcomeMessage      string  `mapstructure:"welcome_message"`
+	WelcomeImages       bool    `mapstructure:"welcome_images"`
 	AfterSuccessMessage string  `mapstructure:"after_success_message"`
 	AfterFailMessage    string  `mapstructure:"after_fail_message"`
 	AllowedGroupIds     []int64 `mapstructure:"allowed_group_ids"`
@@ -146,7 +149,31 @@ func challengeUser(m *tb.Message) {
 		Text:   config.ButtonText,
 	}}}
 
-	challengeMsg, err := bot.Reply(m, config.WelcomeMessage, &tb.ReplyMarkup{InlineKeyboard: inlineKeys})
+	var message interface{}
+	if config.WelcomeImages {
+		imgPath, err := getRandomImage()
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		// Open the image file
+		imgFile, err := os.Open(imgPath)
+		if err != nil {
+			log.Printf("Can't open image: %v", err)
+			return
+		}
+		defer imgFile.Close()
+
+		message = &tb.Photo{
+			File:    tb.FromReader(imgFile),
+			Caption: config.WelcomeMessage,
+		}
+	} else {
+		message = config.WelcomeMessage
+	}
+
+	challengeMsg, err := bot.Reply(m, message, &tb.ReplyMarkup{InlineKeyboard: inlineKeys})
 	if err != nil {
 		log.Printf("Can't send challenge msg: %v", err)
 		return
@@ -256,6 +283,26 @@ func getToken(key string) (string, error) {
 		return "", err
 	}
 	return token, nil
+}
+
+func getRandomImage() (string, error) {
+	const imageDir = "./images"
+
+	images, err := os.ReadDir(imageDir)
+	if err != nil {
+		err := errors.Errorf("Error reading directory: %s", err)
+		return "", err
+	}
+
+	if len(images) == 0 {
+		err := errors.Errorf("No files found in the images directory")
+		return "", err
+	}
+
+	// Pick a random image
+	imageName := images[rand.Intn(len(images))].Name()
+
+	return filepath.Join(imageDir, imageName), nil
 }
 
 func getBanDuration() (int64, error) {

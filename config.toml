@@ -6,6 +6,9 @@ button_text = "I'm not a robot!"
 # Bot sends this message to new users
 welcome_message = "Hello! This is the spam protection system. Please press the button within 30 seconds or you will be banned!"
 
+# If set to true, images from ./images directory taken at random and added to welcome meassage
+welcome_images = false
+
 # Edit welcome message with this text if user passed validation
 after_success_message = "User passed the validation."
 
