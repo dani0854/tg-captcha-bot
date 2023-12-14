@@ -27,6 +27,15 @@ welcome_timeout = "30"
 # If the new user does not press the button, the bot will ban the user for this duration of time. Can be "forever" or number of minutes ("10")
 ban_duration = "forever"
 
+# Health message bot prints when /healthz command called
+health_message = "I'm OK"
+
+# Response bot gives if wrong person persses the button
+wrong_person_response = "This button isn't for you"
+
+# Response bot gives if wrong person persses the button
+validation_passed_response = "Validation passed!"
+
 # Do you want to use a socks5 proxy server? Can be "yes" or "no"
 use_socks5_proxy = "no"
 

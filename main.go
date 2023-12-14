@@ -25,20 +25,23 @@ import (
 
 // Config struct for toml config file
 type Config struct {
-	ButtonText          string  `mapstructure:"button_text"`
-	WelcomeMessage      string  `mapstructure:"welcome_message"`
-	WelcomeImages       bool    `mapstructure:"welcome_images"`
-	AfterSuccessMessage string  `mapstructure:"after_success_message"`
-	AfterFailMessage    string  `mapstructure:"after_fail_message"`
-	AllowedGroupIds     []int64 `mapstructure:"allowed_group_ids"`
-	PrintSuccessAndFail string  `mapstructure:"print_success_and_fail_messages_strategy"`
-	WelcomeTimeout      string  `mapstructure:"welcome_timeout"`
-	BanDurations        string  `mapstructure:"ban_duration"`
-	UseSocks5Proxy      string  `mapstructure:"use_socks5_proxy"`
-	Socks5Address       string  `mapstructure:"socks5_address"`
-	Socks5Port          string  `mapstructure:"socks5_port"`
-	Socks5Login         string  `mapstructure:"socks5_login"`
-	Socks5Password      string  `mapstructure:"socks5_password"`
+	ButtonText               string  `mapstructure:"button_text"`
+	WelcomeMessage           string  `mapstructure:"welcome_message"`
+	WelcomeImages            bool    `mapstructure:"welcome_images"`
+	AfterSuccessMessage      string  `mapstructure:"after_success_message"`
+	AfterFailMessage         string  `mapstructure:"after_fail_message"`
+	AllowedGroupIds          []int64 `mapstructure:"allowed_group_ids"`
+	PrintSuccessAndFail      string  `mapstructure:"print_success_and_fail_messages_strategy"`
+	WelcomeTimeout           string  `mapstructure:"welcome_timeout"`
+	BanDurations             string  `mapstructure:"ban_duration"`
+	HealthMessage            string  `mapstructure:"health_message"`
+	WrongPersonResponse      string  `mapstructure:"wrong_person_response"`
+	ValidationPassedResponse string  `mapstructure:"validation_passed_response"`
+	UseSocks5Proxy           string  `mapstructure:"use_socks5_proxy"`
+	Socks5Address            string  `mapstructure:"socks5_address"`
+	Socks5Port               string  `mapstructure:"socks5_port"`
+	Socks5Login              string  `mapstructure:"socks5_login"`
+	Socks5Password           string  `mapstructure:"socks5_password"`
 }
 
 var config Config
@@ -93,8 +96,7 @@ func main() {
 	}
 
 	bot.Handle("/healthz", func(m *tb.Message) {
-		msg := "I'm OK"
-		if _, err := bot.Send(m.Chat, msg); err != nil {
+		if _, err := bot.Send(m.Chat, config.HealthMessage); err != nil {
 			log.Println(err)
 		}
 		log.Printf("Healthz request from user: %v\n in chat: %v", m.Sender, m.Chat)
@@ -217,7 +219,7 @@ func challengeUser(m *tb.Message) {
 // passChallenge is used when user passed the validation
 func passChallenge(c *tb.Callback) {
 	if c.Message.ReplyTo.Sender.ID != c.Sender.ID {
-		err := bot.Respond(c, &tb.CallbackResponse{Text: "This button isn't for you"})
+		err := bot.Respond(c, &tb.CallbackResponse{Text: config.WrongPersonResponse})
 		if err != nil {
 			log.Println(err)
 		}
@@ -243,7 +245,7 @@ func passChallenge(c *tb.Callback) {
 	if err != nil {
 		log.Println(err)
 	}
-	err = bot.Respond(c, &tb.CallbackResponse{Text: "Validation passed!"})
+	err = bot.Respond(c, &tb.CallbackResponse{Text: config.ValidationPassedResponse})
 	if err != nil {
 		log.Println(err)
 	}
