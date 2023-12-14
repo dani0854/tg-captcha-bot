@@ -120,6 +120,12 @@ func challengeUser(m *tb.Message) {
 	}
 	log.Printf("User: %v joined the chat: %v", m.UserJoined, m.Chat)
 
+	// Extract weclome timeout duration
+	timeoutDuration, err := strconv.ParseInt(config.WelcomeTimeout, 10, 64)
+	if err != nil {
+		log.Println(err)
+	}
+
 	if member, err := bot.ChatMemberOf(m.Chat, m.UserJoined); err == nil {
 		if member.Role == tb.Restricted {
 			log.Printf("User: %v already restricted in chat: %v", m.UserJoined, m.Chat)
@@ -127,8 +133,10 @@ func challengeUser(m *tb.Message) {
 		}
 	}
 
-	newChatMember := tb.ChatMember{User: m.UserJoined, RestrictedUntil: tb.Forever(), Rights: tb.Rights{CanSendMessages: false}}
-	err := bot.Restrict(m.Chat, &newChatMember)
+	// Set restriction duration incase bot fails
+	restrictionDuration := time.Now().Add(2 * time.Duration(timeoutDuration) * time.Second).Unix()
+	newChatMember := tb.ChatMember{User: m.UserJoined, RestrictedUntil: restrictionDuration, Rights: tb.Rights{CanSendMessages: false}}
+	err = bot.Restrict(m.Chat, &newChatMember)
 	if err != nil {
 		log.Println(err)
 	}
@@ -144,11 +152,7 @@ func challengeUser(m *tb.Message) {
 		return
 	}
 
-	n, err := strconv.ParseInt(config.WelcomeTimeout, 10, 64)
-	if err != nil {
-		log.Println(err)
-	}
-	time.AfterFunc(time.Duration(n)*time.Second, func() {
+	time.AfterFunc(time.Duration(timeoutDuration)*time.Second, func() {
 		_, passed := passedUsers.Load(m.UserJoined.ID)
 		if !passed {
 			banDuration, e := getBanDuration()
