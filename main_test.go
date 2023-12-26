@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestReadConfig(t *testing.T) {
-	err := readConfig()
+func TestInitConfig(t *testing.T) {
+	err := initConfig()
 	if err != nil {
 		t.Errorf("Cannot read config file. Error: %v", err)
 	}
@@ -30,9 +30,9 @@ func TestIncorrectToken(t *testing.T) {
 	token := "a123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
 	os.Setenv("TEST_TOKEN", token)
 
-	v, _ := getToken("TEST_TOKEN")
+	_, err := getToken("TEST_TOKEN")
 
-	if v != "" {
-		t.Errorf(`Case failed. Expected "", Have: %v`, v)
+	if err == nil {
+		t.Errorf(`Case failed. Expected error`)
 	}
 }

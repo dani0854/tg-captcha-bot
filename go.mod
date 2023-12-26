@@ -1,12 +1,11 @@
 module github.com/mxssl/tg-captcha-bot
 
-go 1.20
+go 1.21
 
 require (
-	github.com/pkg/errors v0.9.1
 	github.com/spf13/viper v1.17.0
 	golang.org/x/net v0.19.0
-	gopkg.in/tucnak/telebot.v2 v2.5.0
+	gopkg.in/telebot.v3 v3.2.0
 )
 
 require (

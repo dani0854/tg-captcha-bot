@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
+
 	"net"
 	"net/http"
 	"os"
@@ -16,11 +18,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
-	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"golang.org/x/net/proxy"
-	tb "gopkg.in/tucnak/telebot.v2"
+	tele "gopkg.in/telebot.v3"
 )
 
 // Config struct for toml config file
@@ -44,296 +46,445 @@ type Config struct {
 	Socks5Password           string  `mapstructure:"socks5_password"`
 }
 
+const tgTokenEnv = "TGTOKEN"
+const configPathEnv = "CONFIG_PATH"
+const imagesPathEnv = "IMAGES_PATH"
+const logLevelEnv = "LOG_LEVEL"
+
+var allowedUpdates = []string{
+	"message",
+	"callback_query",
+	"chat_member",
+}
+
 var config Config
+var b *tele.Bot
 var passedUsers = sync.Map{}
-var bot *tb.Bot
-var tgtoken = "TGTOKEN"
-var configPath = "CONFIG_PATH"
+var images [][]byte
 
 func init() {
-	err := readConfig()
+	err := initLogger()
 	if err != nil {
-		log.Fatalf("Cannot read config file. Error: %v", err)
+		fmt.Printf("[ERROR] Couldn't initialize logger: %s", err)
+		os.Exit(1)
+	}
+
+	err = initConfig()
+	if err != nil {
+		slog.Error("Couldn't initialize config", "error", err)
+		os.Exit(1)
+	}
+
+	err = initBot()
+	if err != nil {
+		slog.Error("Couldn't initialize bot", "error", err)
+		os.Exit(1)
+	}
+
+	if config.WelcomeImages {
+		err = initImages()
+		if err != nil {
+			slog.Error("Couldn't initialize images", "error", err)
+			os.Exit(1)
+		}
+
 	}
 }
 
 func main() {
-	token, err := getToken(tgtoken)
+	err := setupCaptchaChallange()
 	if err != nil {
-		log.Fatalln(err)
-	}
-	log.Printf("Telegram Bot Token [%v] successfully obtained from env variable $TGTOKEN\n", token)
-
-	var httpClient *http.Client
-	if config.UseSocks5Proxy == "yes" {
-		var err error
-		httpClient, err = initSocks5Client()
-		if err != nil {
-			log.Fatalln(err)
-		}
+		slog.Error("Couldn't setup captcha challenge", "error", err)
+		os.Exit(1)
 	}
 
-	bot, err = tb.NewBot(tb.Settings{
-		Token:  token,
-		Poller: &tb.LongPoller{Timeout: 10 * time.Second},
-		Client: httpClient,
-	})
-	if err != nil {
-		log.Fatalf("Cannot start bot. Error: %v\n", err)
-	}
-
-	bot.Handle(tb.OnUserJoined, challengeUser)
-	bot.Handle(tb.OnCallback, passChallenge)
+	// b.Handle(tele.OnCallback, passChallenge)
 
 	// Leave if group not in a whitelist
 	if len(config.AllowedGroupIds) != 0 {
-		bot.Handle(tb.OnAddedToGroup, func(m *tb.Message) {
-			if !slices.Contains(config.AllowedGroupIds, m.Chat.ID) {
-				log.Printf("Chat with id=%d is not in allowed group ID's, leaving", m.Chat.ID)
-				bot.Leave(m.Chat)
+		b.Handle(tele.OnAddedToGroup, func(c tele.Context) error {
+			if !slices.Contains(config.AllowedGroupIds, c.Chat().ID) {
+				slog.Warn("Chat is not in allowed group ID's, leaving", "chat_id", c.Chat().ID)
+				return b.Leave(c.Chat())
 			}
+			return nil
 		})
 	}
 
-	bot.Handle("/healthz", func(m *tb.Message) {
-		if _, err := bot.Send(m.Chat, config.HealthMessage); err != nil {
-			log.Println(err)
-		}
-		log.Printf("Healthz request from user: %v\n in chat: %v", m.Sender, m.Chat)
+	// Print health message
+	b.Handle("/healthz", func(c tele.Context) error {
+		slog.Info("Healthz requested", "from_username", getUsername(c.Sender()), "chat_id", c.Chat().ID)
+		slog.Debug("Healthz requested", "from", c.Sender(), "chat", c.Chat())
+		return c.Send(config.HealthMessage)
 	})
 
-	log.Println("Bot started!")
 	go func() {
-		bot.Start()
+		b.Start()
 	}()
+	slog.Info("Bot started!")
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 	<-signalChan
-	log.Println("Shutdown signal received, exiting...")
+	slog.Info("Shutdown signal received, exiting...")
 }
 
-func challengeUser(m *tb.Message) {
-	// Check if group allowed
-	if len(config.AllowedGroupIds) != 0 && !slices.Contains(config.AllowedGroupIds, m.Chat.ID) {
-		log.Printf("Chat with id=%d is not in allowed group ID's, not trying to challange user", m.Chat.ID)
-		return
-	}
-
-	if m.UserJoined.ID != m.Sender.ID {
-		return
-	}
-	log.Printf("User: %v joined the chat: %v", m.UserJoined, m.Chat)
-
+func setupCaptchaChallange() (err error) {
 	// Extract weclome timeout duration
 	timeoutDuration, err := strconv.ParseInt(config.WelcomeTimeout, 10, 64)
 	if err != nil {
-		log.Println(err)
-	}
-
-	if member, err := bot.ChatMemberOf(m.Chat, m.UserJoined); err == nil {
-		if member.Role == tb.Restricted {
-			log.Printf("User: %v already restricted in chat: %v", m.UserJoined, m.Chat)
-			return
-		}
-	}
-
-	// Set restriction duration incase bot fails
-	restrictionDuration := time.Now().Add(2 * time.Duration(timeoutDuration) * time.Second).Unix()
-	newChatMember := tb.ChatMember{User: m.UserJoined, RestrictedUntil: restrictionDuration, Rights: tb.Rights{CanSendMessages: false}}
-	err = bot.Restrict(m.Chat, &newChatMember)
-	if err != nil {
-		log.Println(err)
-	}
-
-	inlineKeys := [][]tb.InlineButton{{tb.InlineButton{
-		Unique: "challenge_btn",
-		Text:   config.ButtonText,
-	}}}
-
-	var message interface{}
-	if config.WelcomeImages {
-		imgPath, err := getRandomImage()
-		if err != nil {
-			log.Println(err)
-			return
-		}
-
-		// Open the image file
-		imgFile, err := os.Open(imgPath)
-		if err != nil {
-			log.Printf("Can't open image: %v", err)
-			return
-		}
-		defer imgFile.Close()
-
-		message = &tb.Photo{
-			File:    tb.FromReader(imgFile),
-			Caption: config.WelcomeMessage,
-		}
-	} else {
-		message = config.WelcomeMessage
-	}
-
-	challengeMsg, err := bot.Reply(m, message, &tb.ReplyMarkup{InlineKeyboard: inlineKeys})
-	if err != nil {
-		log.Printf("Can't send challenge msg: %v", err)
+		err = fmt.Errorf("Cannot parse timeout duration '%s': %s", config.WelcomeTimeout, err)
 		return
 	}
 
-	time.AfterFunc(time.Duration(timeoutDuration)*time.Second, func() {
-		_, passed := passedUsers.Load(m.UserJoined.ID)
-		if !passed {
-			banDuration, e := getBanDuration()
-			if e != nil {
-				log.Println(e)
+	captchaButton := tele.InlineButton{
+		Unique: "challenge_btn",
+		Text:   config.ButtonText,
+	}
+
+	b.Handle(tele.OnChatMember, func(c tele.Context) (err error) {
+		// Check if group allowed
+		if len(config.AllowedGroupIds) != 0 && !slices.Contains(config.AllowedGroupIds, c.Chat().ID) {
+			slog.Warn("Chat not in allowed group ID's, not trying to challange user", "chat", c.Chat())
+			return b.Leave(c.Chat())
+		}
+
+		if !(c.ChatMember().OldChatMember.Role == "left" && c.ChatMember().NewChatMember.Role == "member") {
+			slog.Debug("Not a join update", "chat_member_old", c.ChatMember().OldChatMember, "chat_member_new", c.ChatMember().NewChatMember)
+			return
+		}
+
+		user := c.ChatMember().NewChatMember.User
+		username := getUsername(user)
+
+		slog.Info("User joined the chat", "from_username", username, "chat_id", c.Chat().ID)
+		slog.Debug("User joined the chat", "user", c.ChatMember(), "chat", c.Chat())
+
+		// Set restriction duration incase bot fails
+		restrictionDuration := time.Now().Add(2 * time.Duration(timeoutDuration) * time.Second).Unix()
+		restrictedChatMember := tele.ChatMember{User: c.ChatMember().NewChatMember.User, RestrictedUntil: restrictionDuration, Rights: tele.Rights{CanSendMessages: false}}
+
+		// Restrict user upon entry
+		err = b.Restrict(c.Chat(), &restrictedChatMember)
+		if err != nil {
+			err = fmt.Errorf("Couldn't restrict user: %s", err)
+			return
+		}
+
+		// Create personolised text message
+
+		messageText := username + config.WelcomeMessage
+
+		mention := []tele.MessageEntity{
+			{
+				Type:   tele.EntityTMention,
+				Length: utf8.RuneCountInString(username),
+				User:   user,
+			},
+		}
+		slog.Debug("Created mention", "mention", mention)
+
+		var message interface{}
+		if config.WelcomeImages {
+			// Get random image
+			image := images[rand.Intn(len(images))]
+
+			message = &tele.Photo{
+				File:    tele.FromReader(bytes.NewReader(image)),
+				Caption: messageText,
 			}
-			chatMember := tb.ChatMember{User: m.UserJoined, RestrictedUntil: banDuration}
-			err := bot.Ban(m.Chat, &chatMember)
+		} else {
+			message = messageText
+		}
+
+		msg, err := b.Send(c.Chat(), message, &tele.SendOptions{Entities: mention, ReplyMarkup: &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{captchaButton}}}})
+		if err != nil {
+			err = fmt.Errorf("Can't send challenge msg: %v", err)
+			return
+		}
+
+		banDuration, err := getBanDuration()
+		if err != nil {
+			err = fmt.Errorf("Can't get ban duration: %v", err)
+			return
+		}
+
+		scheduleTimeout(c.Chat(), user, msg, timeoutDuration, banDuration)
+
+		return
+	})
+
+	b.Handle(&captchaButton, func(c tele.Context) (err error) {
+		var entities tele.Entities
+		if config.WelcomeImages {
+			entities = c.Callback().Message.CaptionEntities
+		} else {
+			entities = c.Callback().Message.Entities
+		}
+		var user *tele.User
+		for _, entity := range entities {
+			if entity.User != nil {
+				user = entity.User
+				break
+			}
+		}
+		if user == nil {
+			slog.Debug("No entities in message", "message", c.Callback().Message)
+			err = fmt.Errorf("No entities in message")
+			// Incase entities not found, don't ban the user
+			passedUsers.Store(c.Callback().Sender.ID, struct{}{})
+			return
+		}
+
+		if user.ID != c.Callback().Sender.ID {
+			return c.Respond(&tele.CallbackResponse{Text: config.WrongPersonResponse})
+		}
+
+		passedUsers.Store(user.ID, struct{}{})
+
+		if config.PrintSuccessAndFail == "show" {
+			_, err := b.Edit(c.Callback().Message, config.AfterSuccessMessage)
 			if err != nil {
-				log.Println(err)
+				slog.Error("Couldn't edit message", "message", c.Callback().Message, "error", err)
+			}
+		} else if config.PrintSuccessAndFail == "del" {
+			err := b.Delete(c.Callback().Message)
+			if err != nil {
+				slog.Error("Couldn't delete message", "message", c.Callback().Message, "error", err)
+			}
+		}
+
+		slog.Info("User passed challenge", "username", getUsername(user), "chat_id", c.Chat().ID)
+		newChatMember := tele.ChatMember{User: user, RestrictedUntil: tele.Forever(), Rights: tele.Rights{CanSendMessages: true}}
+		err = b.Promote(c.Chat(), &newChatMember)
+		if err != nil {
+			err = fmt.Errorf("Couldn't promote user: %s", err)
+			return
+		}
+		err = c.Respond(&tele.CallbackResponse{Text: config.ValidationPassedResponse})
+		if err != nil {
+			slog.Error("Couldn't respond", "callback", c.Callback(), "error", err)
+		}
+
+		return
+	})
+
+	return
+}
+
+func scheduleTimeout(chat *tele.Chat, user *tele.User, msg *tele.Message, timeoutDuration int64, banDuration int64) {
+	time.AfterFunc(time.Duration(timeoutDuration)*time.Second, func() {
+		_, passed := passedUsers.Load(user.ID)
+		if !passed {
+			chatMember := tele.ChatMember{User: user, RestrictedUntil: banDuration}
+			err := b.Ban(chat, &chatMember)
+			if err != nil {
+				slog.Error("Couldn't ban user", "user", user, "chat", chat, "error", err)
+				return
 			}
 
 			if config.PrintSuccessAndFail == "show" {
-				_, err := bot.Edit(challengeMsg, config.AfterFailMessage)
+				_, err := b.Edit(msg, config.AfterFailMessage)
 				if err != nil {
-					log.Println(err)
+					slog.Error("Couldn't edit message", "message", msg, "error", err)
 				}
 			} else if config.PrintSuccessAndFail == "del" {
-				err := bot.Delete(m)
+				err = b.Delete(msg)
 				if err != nil {
-					log.Println(err)
-				}
-				err = bot.Delete(challengeMsg)
-				if err != nil {
-					log.Println(err)
+					slog.Error("Couldn't delete message", "message", msg, "error", err)
 				}
 			}
 
-			log.Printf("User: %v was banned in chat: %v for: %v minutes", m.UserJoined, m.Chat, config.BanDurations)
+			slog.Info("User banned in chat", "username", getUsername(user), "chat_id", chat.ID, "duration", config.BanDurations)
 		}
-		passedUsers.Delete(m.UserJoined.ID)
+		passedUsers.Delete(user.ID)
 	})
+	return
 }
 
-// passChallenge is used when user passed the validation
-func passChallenge(c *tb.Callback) {
-	if c.Message.ReplyTo.Sender.ID != c.Sender.ID {
-		err := bot.Respond(c, &tb.CallbackResponse{Text: config.WrongPersonResponse})
-		if err != nil {
-			log.Println(err)
-		}
+func getUsername(user *tele.User) string {
+	username := user.FirstName
+	if user.LastName != "" {
+		username = username + " " + user.LastName
+	}
+	if user.Username != "" {
+		username = username + " (@" + user.Username + ")"
+	}
+
+	return username
+}
+
+func initLogger() (err error) {
+	// Default
+	logLevel := slog.LevelInfo
+
+	logLevelString, ok := os.LookupEnv(logLevelEnv)
+	if ok {
+		logLevel.UnmarshalText([]byte(logLevelString))
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+
+	slog.SetDefault(logger)
+	return
+}
+
+func initConfig() (err error) {
+	v := viper.New()
+	v.SetConfigName("config")
+	path, ok := os.LookupEnv(configPathEnv)
+	if ok {
+		slog.Info("Using config path from environment variable", "var_name", configPathEnv, "path", path)
+		v.AddConfigPath(path)
+	} else {
+		slog.Info("Using default config path")
+		v.AddConfigPath(".")
+	}
+
+	err = v.ReadInConfig()
+	if err != nil {
+		err = fmt.Errorf("Couldn't read config: %s", err)
 		return
 	}
-	passedUsers.Store(c.Sender.ID, struct{}{})
 
-	if config.PrintSuccessAndFail == "show" {
-		_, err := bot.Edit(c.Message, config.AfterSuccessMessage)
-		if err != nil {
-			log.Println(err)
-		}
-	} else if config.PrintSuccessAndFail == "del" {
-		err := bot.Delete(c.Message)
-		if err != nil {
-			log.Println(err)
-		}
+	err = v.Unmarshal(&config)
+	if err != nil {
+		err = fmt.Errorf("Couldn't umarshal config: %s", err)
+		return
 	}
 
-	log.Printf("User: %v passed the challenge in chat: %v", c.Sender, c.Message.Chat)
-	newChatMember := tb.ChatMember{User: c.Sender, RestrictedUntil: tb.Forever(), Rights: tb.Rights{CanSendMessages: true}}
-	err := bot.Promote(c.Message.Chat, &newChatMember)
-	if err != nil {
-		log.Println(err)
-	}
-	err = bot.Respond(c, &tb.CallbackResponse{Text: config.ValidationPassedResponse})
-	if err != nil {
-		log.Println(err)
-	}
+	slog.Debug("Config loaded", "config", config)
+	return
 }
 
-func readConfig() (err error) {
-	v := viper.New()
-	path, ok := os.LookupEnv(configPath)
-	if ok {
-		v.SetConfigName("config")
-		v.AddConfigPath(path)
+func initBot() (err error) {
+	token, err := getToken(tgTokenEnv)
+	if err != nil {
+		err = fmt.Errorf("Couldn't obtain telegram bot token: %s", err)
+		return
 	}
-	v.SetConfigName("config")
-	v.AddConfigPath(".")
+	slog.Info("Telegram bot token obtained", "token", token)
 
-	if err = v.ReadInConfig(); err != nil {
-		return err
+	var httpClient *http.Client
+	if config.UseSocks5Proxy == "yes" {
+		slog.Info("Using proxy")
+		httpClient, err = initSocks5Client()
+		if err != nil {
+			err = fmt.Errorf("Couldn't init socks5 proxy: %s", err)
+			return
+		}
+		slog.Debug("Initialized proxy", "http_client", httpClient)
 	}
-	if err = v.Unmarshal(&config); err != nil {
-		return err
+
+	b, err = tele.NewBot(tele.Settings{
+		Token:  token,
+		Poller: &tele.LongPoller{Timeout: 10 * time.Second, AllowedUpdates: allowedUpdates},
+		Client: httpClient,
+	})
+	if err != nil {
+		err = fmt.Errorf("Couldn't create bot: %s", err)
+		return
+	}
+	slog.Debug("Bot created", "bot", b)
+
+	return
+}
+
+func getToken(key string) (token string, err error) {
+	token, ok := os.LookupEnv(key)
+	if !ok {
+		err = fmt.Errorf("Env variable %v isn't set!", key)
+		return
+	}
+	match, err := regexp.MatchString(`^[0-9]+:.*$`, token)
+	if err != nil {
+		return
+	}
+	if !match {
+		err = fmt.Errorf("Telegram Bot Token [%v] is incorrect. Token doesn't comply with regexp: `^[0-9]+:.*$`.", token)
+		return
 	}
 	return
 }
 
-func getToken(key string) (string, error) {
-	token, ok := os.LookupEnv(key)
-	if !ok {
-		err := errors.Errorf("Env variable %v isn't set!", key)
-		return "", err
+func initImages() (err error) {
+	imagesPath, ok := os.LookupEnv(imagesPathEnv)
+	if ok {
+		slog.Info("Using images path from environment variable", "var_name", imagesPathEnv, "path", imagesPath)
+	} else {
+		slog.Info("Using default images path")
+		imagesPath = "./images"
 	}
-	match, err := regexp.MatchString(`^[0-9]+:.*$`, token)
-	if err != nil {
-		return "", err
-	}
-	if !match {
-		err := errors.Errorf("Telegram Bot Token [%v] is incorrect. Token doesn't comply with regexp: `^[0-9]+:.*$`. Please, provide a correct Telegram Bot Token through env variable TGTOKEN", token)
-		return "", err
-	}
-	return token, nil
-}
 
-func getRandomImage() (string, error) {
-	const imageDir = "./images"
-
-	images, err := os.ReadDir(imageDir)
+	files, err := os.ReadDir(imagesPath)
 	if err != nil {
-		err := errors.Errorf("Error reading directory: %s", err)
-		return "", err
+		err = fmt.Errorf("Error reading directory: %s", err)
+		return
+	}
+
+	for _, file := range files {
+		imageName := file.Name()
+		imagePath := filepath.Join(imagesPath, file.Name())
+
+		match, err := regexp.MatchString(`\.(?:jpg|png)$`, imageName)
+		if err != nil {
+			return err
+		}
+		if !match {
+			slog.Debug("File extension not supported as image", "image_path", imagePath)
+			continue
+		}
+
+		slog.Debug("Reading image", "image_path", imagePath)
+		image, err := os.ReadFile(imagePath)
+		if err != nil {
+			err = fmt.Errorf("Can't open image: %s", err)
+			return err
+		}
+		images = append(images, image)
 	}
 
 	if len(images) == 0 {
-		err := errors.Errorf("No files found in the images directory")
-		return "", err
+		err = fmt.Errorf("No images found in the images directory")
+		return
 	}
 
-	// Pick a random image
-	imageName := images[rand.Intn(len(images))].Name()
+	slog.Info("Loaded images", "count", len(images))
 
-	return filepath.Join(imageDir, imageName), nil
+	return
 }
 
-func getBanDuration() (int64, error) {
+func getBanDuration() (duration int64, err error) {
 	if config.BanDurations == "forever" {
-		return tb.Forever(), nil
+		duration = tele.Forever()
+		return
 	}
 
 	n, err := strconv.ParseInt(config.BanDurations, 10, 64)
 	if err != nil {
-		return 0, err
+		err = fmt.Errorf("Couldn't parse ban duration '%s': %s", config.BanDurations, err)
+		return
 	}
 
-	return time.Now().Add(time.Duration(n) * time.Minute).Unix(), nil
+	duration = time.Now().Add(time.Duration(n) * time.Minute).Unix()
+
+	return
 }
 
-func initSocks5Client() (*http.Client, error) {
+func initSocks5Client() (httpClient *http.Client, err error) {
 	addr := fmt.Sprintf("%s:%s", config.Socks5Address, config.Socks5Port)
 	dialer, err := proxy.SOCKS5("tcp", addr, &proxy.Auth{User: config.Socks5Login, Password: config.Socks5Password}, proxy.Direct)
 	if err != nil {
-		return nil, fmt.Errorf("cannot init socks5 proxy client dialer: %w", err)
+		err = fmt.Errorf("Couldn't init socks5 proxy client dialer: %w", err)
+		return
 	}
 
 	httpTransport := &http.Transport{}
-	httpClient := &http.Client{Transport: httpTransport}
+	httpClient = &http.Client{Transport: httpTransport}
 	dialContext := func(ctx context.Context, network, address string) (net.Conn, error) {
 		return dialer.Dial(network, address)
 	}
 
 	httpTransport.DialContext = dialContext
 
-	return httpClient, nil
+	return
 }

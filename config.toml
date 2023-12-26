@@ -4,7 +4,7 @@
 button_text = "I'm not a robot!"
 
 # Bot sends this message to new users
-welcome_message = "Hello! This is the spam protection system. Please press the button within 30 seconds or you will be banned!"
+welcome_message = ", welcome! This is the spam protection system. Please press the button within 30 seconds or you will be banned!"
 
 # If set to true, images from ./images directory taken at random and added to welcome meassage
 welcome_images = false
@@ -19,13 +19,13 @@ after_fail_message = "User didn't pass the validation and was banned."
 allowed_group_ids = []
 
 # Show success and failure messages or delete them. Pick "show" or "del"
-print_success_and_fail_messages_strategy = "show"
+print_success_and_fail_messages_strategy = "del"
 
 # During this time in seconds, the new user have to press the captha button
 welcome_timeout = "30"
 
 # If the new user does not press the button, the bot will ban the user for this duration of time. Can be "forever" or number of minutes ("10")
-ban_duration = "forever"
+ban_duration = "60"
 
 # Health message bot prints when /healthz command called
 health_message = "I'm OK"
