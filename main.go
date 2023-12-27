@@ -98,8 +98,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// b.Handle(tele.OnCallback, passChallenge)
-
 	// Leave if group not in a whitelist
 	if len(config.AllowedGroupIds) != 0 {
 		b.Handle(tele.OnAddedToGroup, func(c tele.Context) error {
@@ -376,9 +374,16 @@ func initBot() (err error) {
 	}
 
 	b, err = tele.NewBot(tele.Settings{
-		Token:  token,
-		Poller: &tele.LongPoller{Timeout: 10 * time.Second, AllowedUpdates: allowedUpdates},
+		Token: token,
+		Poller: &tele.LongPoller{Timeout: 10 * time.Second,
+			AllowedUpdates: allowedUpdates,
+			// Temp fix for https://github.com/tucnak/telebot/issues/640
+			LastUpdateID: -2,
+		},
 		Client: httpClient,
+		OnError: func(err error, c tele.Context) {
+			slog.Error("Error during handling", "error", err, "context", c)
+		},
 	})
 	if err != nil {
 		err = fmt.Errorf("Couldn't create bot: %s", err)
