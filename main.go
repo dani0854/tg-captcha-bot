@@ -65,7 +65,7 @@ var images [][]byte
 func init() {
 	err := initLogger()
 	if err != nil {
-		fmt.Printf("[ERROR] Couldn't initialize logger: %w", err)
+		fmt.Printf("[ERROR] Couldn't initialize logger: %v", err)
 		os.Exit(1)
 	}
 
@@ -201,13 +201,7 @@ func setupCaptchaChallange() (err error) {
 			return
 		}
 
-		banDuration, err := getBanDuration()
-		if err != nil {
-			err = fmt.Errorf("Can't get ban duration: %w", err)
-			return
-		}
-
-		scheduleTimeout(c.Chat(), user, msg, timeoutDuration, banDuration)
+		scheduleTimeout(c.Chat(), user, msg, timeoutDuration)
 
 		return
 	})
@@ -270,12 +264,19 @@ func setupCaptchaChallange() (err error) {
 	return
 }
 
-func scheduleTimeout(chat *tele.Chat, user *tele.User, msg *tele.Message, timeoutDuration int64, banDuration int64) {
+func scheduleTimeout(chat *tele.Chat, user *tele.User, msg *tele.Message, timeoutDuration int64) {
 	time.AfterFunc(time.Duration(timeoutDuration)*time.Second, func() {
 		_, passed := passedUsers.Load(user.ID)
 		if !passed {
+			// Get ban duration
+			banDuration, err := getBanDuration()
+			if err != nil {
+				slog.Error("Can't get ban duration", "error", err)
+				return
+			}
+
 			chatMember := tele.ChatMember{User: user, RestrictedUntil: banDuration}
-			err := b.Ban(chat, &chatMember)
+			err = b.Ban(chat, &chatMember)
 			if err != nil {
 				slog.Error("Couldn't ban user", "user", user, "chat", chat, "error", err)
 				return
@@ -293,7 +294,7 @@ func scheduleTimeout(chat *tele.Chat, user *tele.User, msg *tele.Message, timeou
 				}
 			}
 
-			slog.Info("User banned in chat", "username", getUsername(user), "chat_id", chat.ID, "duration", config.BanDurations)
+			slog.Info("User banned in chat", "username", getUsername(user), "chat_id", chat.ID, "until", time.Unix(banDuration, 0).UTC())
 		}
 		passedUsers.Delete(user.ID)
 	})
