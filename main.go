@@ -65,7 +65,7 @@ var images [][]byte
 func init() {
 	err := initLogger()
 	if err != nil {
-		fmt.Printf("[ERROR] Couldn't initialize logger: %s", err)
+		fmt.Printf("[ERROR] Couldn't initialize logger: %w", err)
 		os.Exit(1)
 	}
 
@@ -131,7 +131,7 @@ func setupCaptchaChallange() (err error) {
 	// Extract weclome timeout duration
 	timeoutDuration, err := strconv.ParseInt(config.WelcomeTimeout, 10, 64)
 	if err != nil {
-		err = fmt.Errorf("Cannot parse timeout duration '%s': %s", config.WelcomeTimeout, err)
+		err = fmt.Errorf("Cannot parse timeout duration '%v': %w", config.WelcomeTimeout, err)
 		return
 	}
 
@@ -165,7 +165,7 @@ func setupCaptchaChallange() (err error) {
 		// Restrict user upon entry
 		err = b.Restrict(c.Chat(), &restrictedChatMember)
 		if err != nil {
-			err = fmt.Errorf("Couldn't restrict user: %s", err)
+			err = fmt.Errorf("Couldn't restrict user: %w", err)
 			return
 		}
 
@@ -197,13 +197,13 @@ func setupCaptchaChallange() (err error) {
 
 		msg, err := b.Send(c.Chat(), message, &tele.SendOptions{Entities: mention, ReplyMarkup: &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{captchaButton}}}})
 		if err != nil {
-			err = fmt.Errorf("Can't send challenge msg: %v", err)
+			err = fmt.Errorf("Can't send challenge msg: %w", err)
 			return
 		}
 
 		banDuration, err := getBanDuration()
 		if err != nil {
-			err = fmt.Errorf("Can't get ban duration: %v", err)
+			err = fmt.Errorf("Can't get ban duration: %w", err)
 			return
 		}
 
@@ -256,7 +256,7 @@ func setupCaptchaChallange() (err error) {
 		newChatMember := tele.ChatMember{User: user, RestrictedUntil: tele.Forever(), Rights: tele.Rights{CanSendMessages: true}}
 		err = b.Promote(c.Chat(), &newChatMember)
 		if err != nil {
-			err = fmt.Errorf("Couldn't promote user: %s", err)
+			err = fmt.Errorf("Couldn't promote user: %w", err)
 			return
 		}
 		err = c.Respond(&tele.CallbackResponse{Text: config.ValidationPassedResponse})
@@ -340,13 +340,13 @@ func initConfig() (err error) {
 
 	err = v.ReadInConfig()
 	if err != nil {
-		err = fmt.Errorf("Couldn't read config: %s", err)
+		err = fmt.Errorf("Couldn't read config: %w", err)
 		return
 	}
 
 	err = v.Unmarshal(&config)
 	if err != nil {
-		err = fmt.Errorf("Couldn't umarshal config: %s", err)
+		err = fmt.Errorf("Couldn't umarshal config: %w", err)
 		return
 	}
 
@@ -357,7 +357,7 @@ func initConfig() (err error) {
 func initBot() (err error) {
 	token, err := getToken(tgTokenEnv)
 	if err != nil {
-		err = fmt.Errorf("Couldn't obtain telegram bot token: %s", err)
+		err = fmt.Errorf("Couldn't obtain telegram bot token: %w", err)
 		return
 	}
 	slog.Info("Telegram bot token obtained", "token", token)
@@ -367,7 +367,7 @@ func initBot() (err error) {
 		slog.Info("Using proxy")
 		httpClient, err = initSocks5Client()
 		if err != nil {
-			err = fmt.Errorf("Couldn't init socks5 proxy: %s", err)
+			err = fmt.Errorf("Couldn't init socks5 proxy: %w", err)
 			return
 		}
 		slog.Debug("Initialized proxy", "http_client", httpClient)
@@ -386,7 +386,7 @@ func initBot() (err error) {
 		},
 	})
 	if err != nil {
-		err = fmt.Errorf("Couldn't create bot: %s", err)
+		err = fmt.Errorf("Couldn't create bot: %w", err)
 		return
 	}
 	slog.Debug("Bot created", "bot", b)
@@ -397,7 +397,7 @@ func initBot() (err error) {
 func getToken(key string) (token string, err error) {
 	token, ok := os.LookupEnv(key)
 	if !ok {
-		err = fmt.Errorf("Env variable %v isn't set!", key)
+		err = fmt.Errorf("Env variable '%v' isn't set!", key)
 		return
 	}
 	match, err := regexp.MatchString(`^[0-9]+:.*$`, token)
@@ -405,7 +405,7 @@ func getToken(key string) (token string, err error) {
 		return
 	}
 	if !match {
-		err = fmt.Errorf("Telegram Bot Token [%v] is incorrect. Token doesn't comply with regexp: `^[0-9]+:.*$`.", token)
+		err = fmt.Errorf("Telegram Bot Token '%v' is incorrect. Token doesn't comply with regexp: `^[0-9]+:.*$`.", token)
 		return
 	}
 	return
@@ -422,7 +422,7 @@ func initImages() (err error) {
 
 	files, err := os.ReadDir(imagesPath)
 	if err != nil {
-		err = fmt.Errorf("Error reading directory: %s", err)
+		err = fmt.Errorf("Error reading directory: %w", err)
 		return
 	}
 
@@ -442,7 +442,7 @@ func initImages() (err error) {
 		slog.Debug("Reading image", "image_path", imagePath)
 		image, err := os.ReadFile(imagePath)
 		if err != nil {
-			err = fmt.Errorf("Can't open image: %s", err)
+			err = fmt.Errorf("Can't open image: %w", err)
 			return err
 		}
 		images = append(images, image)
@@ -466,7 +466,7 @@ func getBanDuration() (duration int64, err error) {
 
 	n, err := strconv.ParseInt(config.BanDurations, 10, 64)
 	if err != nil {
-		err = fmt.Errorf("Couldn't parse ban duration '%s': %s", config.BanDurations, err)
+		err = fmt.Errorf("Couldn't parse ban duration '%v': %w", config.BanDurations, err)
 		return
 	}
 
