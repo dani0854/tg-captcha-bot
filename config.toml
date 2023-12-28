@@ -21,6 +21,9 @@ allowed_group_ids = []
 # Show success and failure messages or delete them. Pick "show" or "del"
 print_success_and_fail_messages_strategy = "del"
 
+# Delete join messages. Possible values "always", "on-fail", "never"
+delete_join_messages = "on-fail"
+
 # During this time in seconds, the new user have to press the captha button
 welcome_timeout = "30"
 
