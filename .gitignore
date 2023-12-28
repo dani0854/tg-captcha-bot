@@ -6,3 +6,5 @@ bot
 dist/
 
 tg-captcha-bot
+docker-compose.yaml
+config.toml
