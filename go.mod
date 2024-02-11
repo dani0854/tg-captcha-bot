@@ -1,4 +1,4 @@
-module github.com/mxssl/tg-captcha-bot
+module github.com/dani0854/tg-captcha-bot
 
 go 1.22
 

@@ -70,8 +70,10 @@ func init() {
 		fmt.Printf("[ERROR] Couldn't initialize logger: %v", err)
 		os.Exit(1)
 	}
+}
 
-	err = initConfig()
+func main() {
+	err := initConfig()
 	if err != nil {
 		slog.Error("Couldn't initialize config", "error", err)
 		os.Exit(1)
@@ -91,10 +93,8 @@ func init() {
 		}
 
 	}
-}
 
-func main() {
-	err := setupCaptchaChallange()
+	err = setupCaptchaChallange()
 	if err != nil {
 		slog.Error("Couldn't setup captcha challenge", "error", err)
 		os.Exit(1)
