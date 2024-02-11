@@ -146,7 +146,7 @@ func setupCaptchaChallange() (err error) {
 		b.Handle(tele.OnUserJoined, func(c tele.Context) error {
 			message := c.Message()
 			if message == nil {
-				slog.Error("Join message is nil", "context", c)
+				return fmt.Errorf("Join message is nil in '%v'", c)
 			}
 
 			joinMessages.Store(message.UserJoined.ID, message)
@@ -158,7 +158,7 @@ func setupCaptchaChallange() (err error) {
 	b.Handle(tele.OnChatMember, func(c tele.Context) (err error) {
 		// Check if group allowed
 		if len(config.AllowedGroupIds) != 0 && !slices.Contains(config.AllowedGroupIds, c.Chat().ID) {
-			slog.Warn("Chat not in allowed group ID's, not trying to challange user", "chat", c.Chat())
+			slog.Warn("Chat not in allowed group ID's, not trying to challenge user", "chat", c.Chat())
 			return b.Leave(c.Chat())
 		}
 
@@ -332,7 +332,6 @@ func scheduleTimeout(chat *tele.Chat, user *tele.User, msg *tele.Message, timeou
 
 		slog.Info("User banned in chat", "username", getUsername(user), "chat_id", chat.ID, "until", time.Unix(banDuration, 0).UTC())
 	})
-	return
 }
 
 func deleteJoinMessageIfExists(userID int64) (err error) {
@@ -373,7 +372,10 @@ func initLogger() (err error) {
 
 	logLevelString, ok := os.LookupEnv(logLevelEnv)
 	if ok {
-		logLevel.UnmarshalText([]byte(logLevelString))
+		err = logLevel.UnmarshalText([]byte(logLevelString))
+		if err != nil {
+			return
+		}
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 
@@ -481,14 +483,17 @@ func initImages() (err error) {
 		return
 	}
 
+	filterRE, err := regexp.Compile(`\.(?:jpg|png)$`)
+	if err != nil {
+		err = fmt.Errorf("Error compiling filter regex: %w", err)
+		return
+	}
+
 	for _, file := range files {
 		imageName := file.Name()
 		imagePath := filepath.Join(imagesPath, file.Name())
 
-		match, err := regexp.MatchString(`\.(?:jpg|png)$`, imageName)
-		if err != nil {
-			return err
-		}
+		match := filterRE.MatchString(imageName)
 		if !match {
 			slog.Debug("File extension not supported as image", "image_path", imagePath)
 			continue
