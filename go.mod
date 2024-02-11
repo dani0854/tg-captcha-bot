@@ -5,7 +5,7 @@ go 1.22
 require (
 	github.com/spf13/viper v1.17.0
 	golang.org/x/net v0.19.0
-	gopkg.in/telebot.v3 v3.2.0
+	gopkg.in/telebot.v3 v3.2.1
 )
 
 require (
