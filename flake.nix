@@ -16,8 +16,8 @@
         devShells.default = pkgs.mkShell
           {
             packages = with pkgs; [
-              go
-              golangci-lint
+              go_1_22
+              (golangci-lint.override { buildGoModule = buildGo122Module; })
             ];
           };
       });
