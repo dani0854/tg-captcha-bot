@@ -1,6 +1,6 @@
 module github.com/mxssl/tg-captcha-bot
 
-go 1.21
+go 1.22
 
 require (
 	github.com/spf13/viper v1.17.0
