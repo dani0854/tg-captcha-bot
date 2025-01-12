@@ -170,8 +170,14 @@ func setupCaptchaChallange() (err error) {
 		user := c.ChatMember().NewChatMember.User
 		username := getUsername(user)
 
-		slog.Info("User joined the chat", "from_username", username, "chat_id", c.Chat().ID)
+		slog.Info("User joined the chat", "from_username", username, "user_id", user.ID, "chat_id", c.Chat().ID)
 		slog.Debug("User joined the chat", "user", c.ChatMember(), "chat", c.Chat())
+
+		// Ban users joined via folders
+		if c.ChatMember().ViaFolderLink {
+			banUser(c.Chat(), user, "via_folder_link")
+			return
+		}
 
 		// Set restriction duration incase bot fails
 		restrictionDuration := time.Now().Add(2 * time.Duration(timeoutDuration) * time.Second).Unix()
@@ -297,19 +303,7 @@ func scheduleTimeout(chat *tele.Chat, user *tele.User, msg *tele.Message, timeou
 			return
 		}
 
-		// Get ban duration
-		banDuration, err := getBanDuration()
-		if err != nil {
-			slog.Error("Can't get ban duration", "error", err)
-			return
-		}
-
-		chatMember := tele.ChatMember{User: user, RestrictedUntil: banDuration}
-		err = b.Ban(chat, &chatMember)
-		if err != nil {
-			slog.Error("Couldn't ban user", "user", user, "chat", chat, "error", err)
-			return
-		}
+		banUser(chat, user, "timeout")
 
 		if config.PrintSuccessAndFail == "show" {
 			_, err := b.Edit(msg, config.AfterFailMessage)
@@ -317,21 +311,37 @@ func scheduleTimeout(chat *tele.Chat, user *tele.User, msg *tele.Message, timeou
 				slog.Error("Couldn't edit message", "message", msg, "error", err)
 			}
 		} else if config.PrintSuccessAndFail == "del" {
-			err = b.Delete(msg)
+			err := b.Delete(msg)
 			if err != nil {
 				slog.Error("Couldn't delete message", "message", msg, "error", err)
 			}
 		}
 
 		if config.DeleteJoinMessages == "on-fail" || config.DeleteJoinMessages == "always" {
-			err = deleteJoinMessageIfExists(user.ID)
+			err := deleteJoinMessageIfExists(user.ID)
 			if err != nil {
 				slog.Error("Couldn't delete join message", "error", err)
 			}
 		}
-
-		slog.Info("User banned in chat", "username", getUsername(user), "chat_id", chat.ID, "until", time.Unix(banDuration, 0).UTC())
 	})
+}
+
+func banUser(chat *tele.Chat, user *tele.User, reason string) {
+	// Get ban duration
+	banDuration, err := getBanDuration()
+	if err != nil {
+		slog.Error("Can't get ban duration", "error", err)
+		return
+	}
+
+	chatMember := tele.ChatMember{User: user, RestrictedUntil: banDuration}
+	err = b.Ban(chat, &chatMember)
+	if err != nil {
+		slog.Error("Couldn't ban user", "user", user, "chat", chat, "error", err)
+		return
+	}
+
+	slog.Info("User banned in chat", "reason", reason, "username", getUsername(user), "user_id", user.ID, "chat_id", chat.ID, "until", time.Unix(banDuration, 0).UTC())
 }
 
 func deleteJoinMessageIfExists(userID int64) (err error) {
